@@ -1,0 +1,73 @@
+# OAuth bearer token reused across multiple distinct source IPs in a short window.
+# Indicates either: legitimate user roaming, mobile/desktop client switch, NAT egress,
+# or token theft (stealer log, MitM, leaked refresh exchange).
+#
+# Two documents in this file:
+#   1. Base detection: successful OAuth token issuance or use (named for correlation)
+#   2. Correlation rule: count distinct src_ip per access_token over 5 minutes
+
+title: OAuth Token Issued or Used
+id: cb4245f0-3817-4cb8-b0db-a7d788653dce
+name: oauth_token_event
+status: experimental
+description: Base event for OAuth access token issuance or token-bearing API access. Used by correlation rules.
+references:
+  - https://datatracker.ietf.org/doc/html/rfc6749
+  - https://attack.mitre.org/techniques/T1550/001/
+author: Cameron Hopkin
+date: 2026/05/27
+logsource:
+  product: oauth
+  category: authentication
+detection:
+  selection_token_event:
+    event_type:
+      - 'token_issued'
+      - 'token_refreshed'
+      - 'api_request_authenticated'
+  condition: selection_token_event
+fields:
+  - access_token_id
+  - src_ip
+  - user_id
+  - client_id
+  - user_agent
+falsepositives:
+  - Base rule produces all authenticated OAuth events; not actionable on its own.
+level: informational
+
+---
+
+title: OAuth Token Reuse Across Distinct Source IPs
+id: 9c43c9ff-c658-4cce-999d-b7566e231643
+status: experimental
+description: |
+  An OAuth access token is observed authenticating requests from 3 or more
+  distinct source IP addresses within a 5-minute window. Possible indicators
+  of token theft via stealer log, browser extension exfiltration, or replay
+  by an attacker that captured the token.
+references:
+  - https://attack.mitre.org/techniques/T1550/001/
+  - https://owasp.org/www-project-api-security/
+author: Cameron Hopkin
+date: 2026/05/27
+correlation:
+  type: value_count
+  rules:
+    - oauth_token_event
+  group-by:
+    - access_token_id
+  timespan: 5m
+  condition:
+    field: src_ip
+    gte: 3
+tags:
+  - attack.credential_access
+  - attack.t1550.001
+  - attack.persistence
+falsepositives:
+  - User actively roaming between corporate WiFi, cellular, and home network within 5 minutes (verify with user device telemetry)
+  - Mobile carrier NAT shifts (large public IP pools rotating per session) - tune by suppressing known carrier ASNs
+  - Service account or shared token used by clustered backend, when expected per design (document expected client_ids and exclude)
+  - Test/QA traffic from rotating CI worker IPs
+level: medium

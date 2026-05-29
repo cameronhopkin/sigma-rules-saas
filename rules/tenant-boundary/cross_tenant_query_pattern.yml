@@ -1,0 +1,57 @@
+# Database query or API call references a tenant_id that does not match the
+# authenticated session's tenant scope. Strong signal of tenant isolation
+# violation in shared-database multi-tenant SaaS.
+#
+# Detection runs on application or database audit logs that capture both
+# session_tenant_id (from auth context) and query_tenant_id (from WHERE clause
+# or resource ID). Mismatch is the signal.
+
+title: Cross-Tenant Resource Query
+id: bbd040e0-0ba3-46df-b0ae-648f87cb928e
+status: experimental
+description: |
+  A query or API call references a tenant_id, resource ID, or row-level
+  predicate that does not match the authenticated session's tenant scope.
+  In a correctly-implemented multi-tenant system this should never occur
+  outside of explicit superuser flows. Each occurrence is a candidate
+  IDOR (insecure direct object reference) or authorization bypass.
+references:
+  - https://owasp.org/www-project-api-security/  # API1:2023 Broken Object Level Authorization
+  - https://cwe.mitre.org/data/definitions/639.html
+  - https://attack.mitre.org/techniques/T1213/
+author: Cameron Hopkin
+date: 2026/05/27
+logsource:
+  product: application
+  category: application_audit
+detection:
+  selection_query:
+    event_type:
+      - 'query_executed'
+      - 'api_request_completed'
+  filter_match_or_null:
+    session_tenant_id|expand: '%query_tenant_id%'
+  filter_admin_role:
+    user_role:
+      - 'superuser'
+      - 'platform_admin'
+      - 'support_admin'
+  condition: selection_query and not filter_match_or_null and not filter_admin_role
+fields:
+  - user_id
+  - session_tenant_id
+  - query_tenant_id
+  - resource_type
+  - resource_id
+  - api_endpoint
+  - http_method
+tags:
+  - attack.collection
+  - attack.t1213
+  - attack.privilege_escalation
+falsepositives:
+  - Legitimate cross-tenant features that lack their own audit flag (e.g., tenant migration, copy-to-tenant operations) - add the operation type to filter_admin_role or create a dedicated allow-list
+  - Background jobs running as a system user without a tenant_id - exclude by user_id or by null session_tenant_id when the system principal is identified
+  - Bug bounty researcher behavior - typically follows a recognizable pattern (sequential resource_ids, single user_id, many tenant boundaries crossed in short window). Researchers in scope should be allow-listed; out-of-scope crossings should still alert.
+  - Application bug where session_tenant_id is null due to logging defect, not actual cross-tenant access - verify session_tenant_id is reliably populated before relying on this rule
+level: high
